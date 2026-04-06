@@ -11,11 +11,10 @@ import {
   getDoc,
   getDocs,
   serverTimestamp,
-  setDoc,
   updateDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 
 export default function Room() {
   const { roomId } = useParams();
@@ -24,22 +23,20 @@ export default function Room() {
 
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
-  const [username] = useState(
-    "User-" + Math.floor(Math.random() * 1000)
-  );
+  const [username] = useState("Agent-" + Math.floor(Math.random() * 9000 + 1000));
   const [typingUser, setTypingUser] = useState(null);
-  const [vaporize, setVaporize] = useState(false);
+  const [vaporizing, setVaporizing] = useState(false);
 
   /* ---------------- CHECK ROOM ---------------- */
-
   useEffect(() => {
     const checkRoom = async () => {
       const roomRef = doc(db, "rooms", roomId);
       const roomSnap = await getDoc(roomRef);
 
       if (!roomSnap.exists()) {
-        alert("Room not found");
+        alert("This room does not exist or has already evaporated.");
         navigate("/");
+        return;
       }
     };
 
@@ -50,25 +47,32 @@ export default function Room() {
       orderBy("createdAt")
     );
 
+    const unsubscribeOuter = onSnapshot(doc(db, "rooms", roomId), (docSnap) => {
+      if (!docSnap.exists()) {
+        navigate("/");
+      }
+    });
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
+      const msgs = snapshot.docs.map((d) => ({
+        id: d.id,
+        ...d.data(),
       }));
       setMessages(msgs);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      unsubscribeOuter();
+    };
   }, [roomId, navigate]);
 
   /* ---------------- AUTO SCROLL ---------------- */
-
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, typingUser]);
 
   /* ---------------- TYPING LISTENER ---------------- */
-
   useEffect(() => {
     const roomRef = doc(db, "rooms", roomId);
 
@@ -87,60 +91,63 @@ export default function Room() {
   }, [roomId, username]);
 
   /* ---------------- HANDLE TYPING ---------------- */
-
   const handleTyping = async () => {
     const roomRef = doc(db, "rooms", roomId);
     await updateDoc(roomRef, {
       typing: username,
-    });
+    }).catch(() => {});
 
     setTimeout(async () => {
       await updateDoc(roomRef, {
         typing: null,
-      });
-    }, 1500);
+      }).catch(() => {});
+    }, 2000);
   };
 
   /* ---------------- SEND MESSAGE ---------------- */
-
-  const sendMessage = async () => {
+  const sendMessage = async (e) => {
+    e?.preventDefault();
     if (!message.trim()) return;
 
+    const msgText = message;
+    setMessage("");
+
     await addDoc(collection(db, "rooms", roomId, "messages"), {
-      text: message,
+      text: msgText,
       username,
       createdAt: serverTimestamp(),
     });
 
-    setMessage("");
-
     const roomRef = doc(db, "rooms", roomId);
     await updateDoc(roomRef, {
       typing: null,
-    });
+    }).catch(() => {});
   };
 
   /* ---------------- END CHAT ---------------- */
-
   const endChat = async () => {
-    setVaporize(true);
-
+    setVaporizing(true);
+    
+    // Play vaporize animation for a moment before actually deleting
     setTimeout(async () => {
-      const messagesRef = collection(db, "rooms", roomId, "messages");
-      const snapshot = await getDocs(messagesRef);
+      try {
+        const messagesRef = collection(db, "rooms", roomId, "messages");
+        const snapshot = await getDocs(messagesRef);
 
-      for (const msg of snapshot.docs) {
-        await deleteDoc(msg.ref);
+        for (const msg of snapshot.docs) {
+          await deleteDoc(msg.ref);
+        }
+
+        await deleteDoc(doc(db, "rooms", roomId));
+      } catch (err) {
+        console.error(err);
+      } finally {
+        navigate("/");
       }
-
-      await deleteDoc(doc(db, "rooms", roomId));
-
-      navigate("/");
-    }, 1200);
+    }, 1400); // Matches animation duration
   };
 
   /* ---------------- FORMAT TIME ---------------- */
-
   const formatTime = (timestamp) => {
     if (!timestamp) return "";
     const date = timestamp.toDate();
@@ -152,89 +159,104 @@ export default function Room() {
 
   return (
     <motion.div
-      className={`room-container ${vaporize ? "vaporize" : ""}`}
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
+      className={`room-wrapper ${vaporizing ? "vaporize-effect" : ""}`}
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, filter: "blur(20px)" }}
+      transition={{ duration: 0.4 }}
     >
+      <div className="room-bg"></div>
+
       {/* HEADER */}
-      <div className="room-header">
-        <div className="room-title">Vapour Room</div>
+      <header className="room-header glass-panel" style={{ borderRadius: 0, borderTop: 0, borderLeft: 0, borderRight: 0 }}>
+        <div className="room-title-area">
+          <img src="/logo.png?v=2" alt="Logo" style={{ height: "32px" }} />
+          <div className="room-id-badge">
+            <i className="fas fa-lock" style={{ marginRight: "6px", fontSize: "12px" }}></i>
+            {roomId}
+          </div>
+        </div>
 
-        <div>
-          <button className="secondary-btn">
+        <div style={{ display: "flex", gap: "15px", alignItems: "center" }}>
+          <div className="user-badge">
+            <div className="user-dot"></div>
             {username}
-          </button>
+          </div>
 
-          <button
-            className="end-btn"
-            onClick={endChat}
-            style={{ marginLeft: 10 }}
-          >
-            End Chat
+          <button className="btn-end" onClick={endChat}>
+            <i className="fas fa-power-off"></i> 
+            <span className="hide-on-mobile" style={{ marginLeft: "6px" }}>Vaporize</span>
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* CHAT BOX */}
-      <div className="chat-box">
-        {messages.map((msg) => {
-          const isSelf = msg.username === username;
+      {/* CHAT AREA */}
+      <main className="chat-container">
+        <div className="chat-messages">
+          <AnimatePresence initial={false}>
+            {messages.map((msg) => {
+              const isSelf = msg.username === username;
 
-          return (
-            <div
-              key={msg.id}
-              className={`message-row ${isSelf ? "self" : ""}`}
-            >
-              <div
-                className={`message-bubble ${
-                  isSelf ? "self" : "other"
-                }`}
-              >
-                {!isSelf && (
-                  <div className="username-label">
-                    {msg.username}
+              return (
+                <motion.div
+                  key={msg.id}
+                  initial={{ opacity: 0, y: 15, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                  className={`message-wrapper ${isSelf ? "self" : "other"}`}
+                >
+                  <div className="message-meta">
+                    <span className="username">{isSelf ? "You" : msg.username}</span>
+                    <span className="time">{formatTime(msg.createdAt)}</span>
                   </div>
-                )}
+                  <div className="message-bubble">
+                    {msg.text}
+                  </div>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
 
-                {msg.text}
-
-                <div className="message-time">
-                  {formatTime(msg.createdAt)}
+          {typingUser && (
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              className="message-wrapper other" 
+              style={{ marginTop: '10px' }}
+            >
+              <div className="message-bubble" style={{ padding: "10px 16px", display: "flex", alignItems: "center", gap: "10px" }}>
+                <span style={{ fontSize: "12px", color: "var(--text-muted)", fontStyle: "italic" }}>
+                  {typingUser} typing
+                </span>
+                <div className="typing-dots">
+                  <span></span><span></span><span></span>
                 </div>
               </div>
-            </div>
-          );
-        })}
+            </motion.div>
+          )}
+          <div ref={bottomRef} style={{ height: "1px" }}></div>
+        </div>
 
-        {typingUser && (
-          <div className="typing-indicator">
-            {typingUser} is typing...
-          </div>
-        )}
-
-        <div ref={bottomRef}></div>
-      </div>
-
-      {/* INPUT */}
-      <div className="chat-input-container">
-        <input
-          className="chat-input"
-          value={message}
-          onChange={(e) => {
-            setMessage(e.target.value);
-            handleTyping();
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") sendMessage();
-          }}
-          placeholder="Type your message..."
-        />
-
-        <button className="send-btn" onClick={sendMessage}>
-          Send
-        </button>
-      </div>
+        {/* INPUT */}
+        <div className="chat-input-wrapper">
+          <form className="chat-input-box" onSubmit={sendMessage}>
+            <input
+              value={message}
+              onChange={(e) => {
+                setMessage(e.target.value);
+                handleTyping();
+              }}
+              placeholder="Message the void..."
+              disabled={vaporizing}
+              autoFocus
+            />
+            <button type="submit" className="btn-send" disabled={vaporizing || !message.trim()}>
+              <i className="fas fa-paper-plane"></i>
+            </button>
+          </form>
+        </div>
+      </main>
     </motion.div>
   );
 }

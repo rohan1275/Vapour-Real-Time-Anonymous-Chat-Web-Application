@@ -10,7 +10,8 @@ export default function Contact() {
       {/* NAVBAR */}
       <header className="navbar">
         <div className="brand-container" onClick={() => navigate("/")}>
-          <img src="/logo.svg" alt="Vapour Logo" className="brand-logo" />
+          <img src="/logo.png?v=2" alt="Vapour Logo" className="brand-logo" />
+          <span className="brand-text text-gradient">Vapour</span>
         </div>
 
         <nav>
